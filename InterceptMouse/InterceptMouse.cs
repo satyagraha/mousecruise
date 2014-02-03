@@ -12,31 +12,46 @@ namespace InterceptMouse
 {
 	class InterceptMouse
 	{
+		private static int loopSleep;
+		private static int scrollDelta;
 		private static LowLevelMouseProc _proc = HookCallback;
 		private static IntPtr _hookID = IntPtr.Zero;
 		private static volatile IntPtr _cruiseHw = IntPtr.Zero;
 		private static volatile int _cruisePt = 0;
 		private static volatile int _cruiseDir = 0;
 
-		public static void Main()
+		public static int Main(string[] args)
 		{
+			if (args.Length == 0) {
+				loopSleep = 10;
+				scrollDelta = 20;
+			} else if (args.Length == 2) {
+				loopSleep = Convert.ToInt16(args[0]);
+				scrollDelta = Convert.ToInt16(args[1]);
+				
+			} else {
+				Console.WriteLine("Wrong number of arguments: " + args);
+				return 1;
+			}
 			new Thread(delegate() {
 			           	while(true) {
 			           		if (_cruiseDir != 0) {
 			           			Console.WriteLine("_cruiseDir: " + _cruiseDir);
 			           			if (_cruiseHw != IntPtr.Zero) {
 			           				Console.WriteLine("_cruiseHw: " + _cruiseHw);
-			           				int delta = _cruiseDir * 15;
-			           				PostMessage(_cruiseHw, (uint)MouseMessages.WM_MOUSEWHEEL, delta << 16, _cruisePt);
+			           				int delta = _cruiseDir * scrollDelta;
+			           				//PostMessage(_cruiseHw, (uint)MouseMessages.WM_MOUSEWHEEL, delta << 16, _cruisePt);
+			           				SendMessage(_cruiseHw, (uint)MouseMessages.WM_MOUSEWHEEL, delta << 16, _cruisePt);
 			           			}
 			           		}
-			           		Thread.Sleep(100);
+			           		Thread.Sleep(loopSleep);
 			           	}
 			           }).Start();
 			
 			_hookID = SetHook(_proc);
 			Application.Run();
 			UnhookWindowsHookEx(_hookID);
+			return 0;
 		}
 
 		private static IntPtr SetHook(LowLevelMouseProc proc)
@@ -144,6 +159,9 @@ namespace InterceptMouse
 		
 		[DllImport("user32.dll")]
 		private static extern bool PostMessage(IntPtr hWnd, uint Msg, int wParam, int lParam);
+
+		[DllImport("user32.dll")]
+		private static extern bool SendMessage(IntPtr hWnd, uint Msg, int wParam, int lParam);
 
 		[DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
 		private static extern IntPtr GetModuleHandle(string lpModuleName);

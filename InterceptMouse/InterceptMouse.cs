@@ -3,28 +3,35 @@
  */
 using System;
 using System.Diagnostics;
+using System.Linq;
 using System.Threading;
 using System.Windows;
 using System.Windows.Forms;
 using System.Runtime.InteropServices;
+using System.Collections.Concurrent;
 
 namespace InterceptMouse
 {
+	class CruiseEvent {
+		public int cruiseDir;
+		public IntPtr cruiseHw;
+		public int cruisePt;
+	}
+	
 	class InterceptMouse
 	{
+		
 		private static int loopSleep;
 		private static int scrollDelta;
 		private static LowLevelMouseProc _proc = HookCallback;
 		private static IntPtr _hookID = IntPtr.Zero;
-		private static volatile IntPtr _cruiseHw = IntPtr.Zero;
-		private static volatile int _cruisePt = 0;
-		private static volatile int _cruiseDir = 0;
+		private static BlockingCollection<CruiseEvent> queue = new BlockingCollection<CruiseEvent>();
 
 		public static int Main(string[] args)
 		{
 			if (args.Length == 0) {
 				loopSleep = 10;
-				scrollDelta = 20;
+				scrollDelta = 15;
 			} else if (args.Length == 2) {
 				loopSleep = Convert.ToInt16(args[0]);
 				scrollDelta = Convert.ToInt16(args[1]);
@@ -34,17 +41,22 @@ namespace InterceptMouse
 				return 1;
 			}
 			new Thread(delegate() {
-			           	while(true) {
-			           		if (_cruiseDir != 0) {
-			           			Console.WriteLine("_cruiseDir: " + _cruiseDir);
-			           			if (_cruiseHw != IntPtr.Zero) {
-			           				Console.WriteLine("_cruiseHw: " + _cruiseHw);
-			           				int delta = _cruiseDir * scrollDelta;
-			           				//PostMessage(_cruiseHw, (uint)MouseMessages.WM_MOUSEWHEEL, delta << 16, _cruisePt);
-			           				SendMessage(_cruiseHw, (uint)MouseMessages.WM_MOUSEWHEEL, delta << 16, _cruisePt);
+			           	CruiseEvent cruise;
+			           	while (true) {
+			           		cruise = queue.Take();
+			           		if (cruise.cruiseDir != 0) {
+			           			Console.WriteLine("cruiseDir: " + cruise.cruiseDir);
+			           			if (cruise.cruiseHw != IntPtr.Zero) {
+			           				Console.WriteLine("cruiseHw: " + cruise.cruiseHw);
+			           				float ticks = 0.0f;
+			           				while (queue.Count == 0) {
+			           					ticks = Math.Min(ticks + 0.2f, scrollDelta);
+			           					int delta = cruise.cruiseDir * (int)ticks;
+			           					SendMessage(cruise.cruiseHw, (uint)MouseMessages.WM_MOUSEWHEEL, delta << 16, cruise.cruisePt);
+			           					Thread.Sleep(loopSleep);
+			           				}
 			           			}
 			           		}
-			           		Thread.Sleep(loopSleep);
 			           	}
 			           }).Start();
 			
@@ -79,25 +91,31 @@ namespace InterceptMouse
 //					                  + hookStruct.mouseData.high.ToString("X4") + " "
 //					                  + hookStruct.flags);
 //				}
+				CruiseEvent cruise = null; 
 				if (msgId == MouseMessages.WM_XBUTTONDOWN)
 				{
-					_cruiseHw = WindowFromPoint(hookStruct.pt);
-					_cruisePt = hookStruct.pt.y << 16 | hookStruct.pt.x;
+					cruise = new CruiseEvent();
+					cruise.cruiseHw = WindowFromPoint(hookStruct.pt);
+					cruise.cruisePt = hookStruct.pt.y << 16 | hookStruct.pt.x;
 					if (hookStruct.mouseData.high == 1) {
-						_cruiseDir = -1;
+						cruise.cruiseDir = +1;
 					}
 					else if (hookStruct.mouseData.high == 2) {
-						_cruiseDir = +1;
+						cruise.cruiseDir = -1;
 					}
 					else {
-						_cruiseDir = 0;
+						cruise.cruiseDir = 0;
 					}
 					handled = true;
 				}
 				else if (msgId == MouseMessages.WM_XBUTTONUP) {
-					_cruiseDir = 0;
-					_cruiseHw = IntPtr.Zero;
+					cruise = new CruiseEvent();
+					cruise.cruiseDir = 0;
+					cruise.cruiseHw = IntPtr.Zero;
 					handled = true;
+				}
+				if (cruise != null) {
+					queue.Add(cruise);
 				}
 			}
 			return handled ? (IntPtr) 1 : CallNextHookEx(_hookID, nCode, wParam, lParam);
